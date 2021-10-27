@@ -151,7 +151,7 @@ func all(w http.ResponseWriter, req *http.Request) {
 	// Create DynamoDB client
 	svc := dynamodb.New(sess)
 	// Name of the table
-	tableName := "csc_482"
+	tableName := "npayag-weather-table-csc-482"
 
 	//Scan the DB for all items
 	out, err := svc.Scan(&dynamodb.ScanInput{
@@ -192,7 +192,7 @@ func status(w http.ResponseWriter, req *http.Request) {
 	// Create DynamoDB client
 	svc := dynamodb.New(sess)
 	// Name of the table
-	tableName := "csc_482"
+	tableName := "npayag-weather-table-csc-482"
 
 	input := &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
