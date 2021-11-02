@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/aws/aws-sdk-go/service/dynamodb/expression"
 	"github.com/gorilla/mux"
 	loggly "github.com/jamespearly/loggly"
 )
@@ -127,8 +129,9 @@ func badPath(w http.ResponseWriter, req *http.Request) {
 type weatherData struct {
 	ID            int     `json:"id"`
 	DATE          string  `json:"applicable_date"`
-	TEMPERATURE   float64 `json:"the_temp`
+	TEMPERATURE   float64 `json:"the_temp"`
 	WEATHERSTATUS string  `json:"weather_state_name"`
+	TIMESTAMP     string  `json:"created"`
 }
 
 type dbitem struct {
@@ -164,7 +167,6 @@ func all(w http.ResponseWriter, req *http.Request) {
 	// var x []weatherData
 	//unmarshal response
 	var dbitem []dbitem
-	// dbitem.Data = x
 	err = dynamodbattribute.UnmarshalListOfMaps(out.Items, &dbitem)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to unmarshal Record:", err))
@@ -204,11 +206,93 @@ func status(w http.ResponseWriter, req *http.Request) {
 	}
 
 	var statusResponse TableStatus
-	statusResponse.Table = "csc_482"
+	statusResponse.Table = "npayag-weather-table-csc-482"
 	statusResponse.Count = result.Table.ItemCount
 
 	json.NewEncoder(w).Encode(statusResponse)
 
+}
+
+// func getDates(w http.ResponseWriter, r *http.Request) {
+// 	query := r.URL.Query()
+// 	filters := query.Get("applicable_date") //filters="color"
+// 	w.WriteHeader(200)
+// 	w.Write([]byte(filters))
+// }
+
+func search(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	urlquery := mux.Vars(req)["forecastdate"]
+	format, err := regexp.MatchString("^\\d{4}\\-(0[1-9]|1[012])\\-(0[1-9]|[12][0-9]|3[01])$", urlquery)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if format {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String("us-east-1")},
+	)
+	if err != nil {
+		fmt.Println("Error starting a new session")
+	}
+	// Create DynamoDB client
+	svc := dynamodb.New(sess)
+	// Name of the table
+	tableName := "npayag-weather-table-csc-482"
+
+	//make the expression
+	//https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/expression/#Contains
+	filt := expression.Contains(expression.Name("Time"), urlquery)
+
+	expr, err := expression.NewBuilder().WithFilter(filt).Build()
+	if err != nil {
+		log.Fatalf("Got error building expression: %s", err)
+	}
+
+	// Build the query input parameters
+	p := &dynamodb.ScanInput{
+		TableName:                 aws.String(tableName),
+		ExpressionAttributeNames:  expr.Names(),
+		ExpressionAttributeValues: expr.Values(),
+		FilterExpression:          expr.Filter(),
+		ProjectionExpression:      expr.Projection(),
+	}
+	// Get all data for given date
+	out, err := svc.Scan(p)
+
+	if err != nil {
+		log.Fatalf("Query API call failed: %s", err)
+	}
+	var dbitem []dbitem
+	err = dynamodbattribute.UnmarshalListOfMaps(out.Items, &dbitem)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to unmarshal Record:", err))
+	}
+
+	json.NewEncoder(w).Encode(dbitem)
+
+	//create a new struct that just holds filtered data
+	//inside DATA array, i want the applicable_date and the temperature
+	//so that when http://localhost:8080/npayag/search?filter=applicable_data it just shows the temperature for that date
+
+	// for index, value := range dbitem {
+	// }
+
+	// query := req.URL.Query()
+
+	// filters := query.Get("Id")
+	// w.Write([]byte(filters))
+
+	// filters, present := query["filters"] //filters=["color", "price", "brand"]
+	// if !present || len(filters) == 0 {
+	// 	fmt.Println("filters not present")
+	// }
+	// w.WriteHeader(200)
+	// w.Write([]byte(strings.Join(filters, ",")))
 }
 
 func main() {
@@ -219,9 +303,18 @@ func main() {
 	// os.Setenv("AWS_SESSION_TOKEN", "")
 
 	r := mux.NewRouter()
+
+	// getDatesHandler := http.HandlerFunc(getDates)
+	// r.HandleFunc("/npayag/all/date", getDates)
+	// http.Handle("/npayag/all/applicable_date", getDatesHandler)
+
 	r.HandleFunc("/npayag/server", server).Methods("GET")
 	r.HandleFunc("/npayag/status", status).Methods("GET")
+
 	r.HandleFunc("/npayag/all", all).Methods("GET")
+
+	// getSearchHandler := http.HandlerFunc(search)
+	r.HandleFunc("/npayag/search", search).Queries("forecastdate", "{forecastdate:.*}")
 
 	//old comment
 	// handler := wrapHandlerWithLogging(r.HandleFunc("/status", status).Methods("GET"))
@@ -236,7 +329,7 @@ func main() {
 	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 
-	http.Handle("/", r)
+	// http.Handle("/", r)
 	// http.ListenAndServe(":8080", wrapHandlerWithLogging(r))
 
 }
